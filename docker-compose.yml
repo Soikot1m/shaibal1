@@ -1,0 +1,47 @@
+# One-command deployment on any VPS (Hetzner, DigitalOcean, Contabo, ...):
+#
+#   1. cp .env.example .env   → set NEXT_PUBLIC_SITE_URL and POSTGRES_PASSWORD
+#   2. SEED_DEMO=true docker compose up -d --build      (first time only)
+#   3. docker compose up -d --build                      (every later deploy)
+#
+# The app listens on port 3000. Put Nginx or Caddy in front for HTTPS
+# (see DEPLOYMENT.md).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shaibal
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-password}
+      POSTGRES_DB: shaibal
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shaibal -d shaibal"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+        ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://shaibal:${POSTGRES_PASSWORD:-change-this-password}@db:5432/shaibal
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      SEED_DEMO: ${SEED_DEMO:-false}
+      AI_API_KEY: ${AI_API_KEY:-}
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dbdata:

@@ -1,0 +1,20 @@
+# dependencies
+node_modules
+
+# next.js build output
+.next
+out
+
+# environment files (never commit secrets — use .env.example as the template)
+.env
+.env*.local
+
+# logs / misc
+*.log
+npm-debug.log*
+.DS_Store
+tsconfig.tsbuildinfo
+
+# hosting providers
+.vercel
+.netlify

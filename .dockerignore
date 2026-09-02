@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+.git
+.env
+.env*.local
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
+docker-compose.yml
+DESIGN_SUMMARY.md
+DEPLOYMENT.md
