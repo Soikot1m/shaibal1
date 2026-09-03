@@ -1,14 +1,13 @@
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight, ShieldCheck, Headset, Handshake, Route, Users, Sparkles, MapPin, Quote, Calendar, Clock, Star } from "lucide-react";
-import { db } from "@/db";
-import { tourDates } from "@/db/schema";
-import { asc, gte } from "drizzle-orm";
 import { Hero } from "@/components/hero";
 import { TourCard, DestinationCard } from "@/components/cards";
 import { SectionHeading, StarRating, StatusBadge } from "@/components/ui";
 import { Reveal, SectionShell } from "@/components/motion";
 import { FaqAccordion } from "@/components/faq-accordion";
-import { getFeaturedTours, getDestinations, getFeaturedReviews, getGallery, getBlogPosts, getFaqs, getPublishedTours } from "@/lib/data";
+import { JourneyScroll } from "@/components/journey-scroll";
+import { EmptyState } from "@/components/empty-state";
+import { getFeaturedTours, getDestinations, getFeaturedReviews, getGallery, getBlogPosts, getFaqs, getPublishedTours, getUpcomingDepartures } from "@/lib/data";
 import { getSiteSettings } from "@/lib/content";
 import { IMG } from "@/lib/images";
 import { formatDate, formatCurrency } from "@/lib/utils";
@@ -22,13 +21,6 @@ const WHY = [
   { icon: Sparkles, t: "Live trip tracking", d: "Follow progress and updates from your phone." },
 ];
 
-const JOURNEY = [
-  { place: "Bogura", note: "Departure from our home base", img: IMG.palmHills, k: "Day 1 · 06:00" },
-  { place: "Chittagong", note: "Coastal gateway to the south", img: IMG.lakeBoat, k: "Day 1 · Evening" },
-  { place: "Bandarban", note: "Hills, viewpoints, tribal villages", img: IMG.greenHills, k: "Day 2–3" },
-  { place: "Cox's Bazar", note: "World's longest natural beach", img: IMG.coxBazarSunset, k: "Day 4" },
-];
-
 const STEPS = [
   { n: "01", t: "Discover", d: "Browse destinations and departures that match your style." },
   { n: "02", t: "Choose a date", d: "Every departure shows live seat availability." },
@@ -40,8 +32,7 @@ export default async function HomePage() {
   const [tours, featuredDests, reviews, gallery, blog, faqs, allTours, settings] = await Promise.all([
     getFeaturedTours(), getDestinations({ featured: true }), getFeaturedReviews(), getGallery(), getBlogPosts(3), getFaqs(), getPublishedTours(), getSiteSettings(),
   ]);
-  const upcoming = await db.select().from(tourDates).where(gte(tourDates.date, new Date())).orderBy(asc(tourDates.date)).limit(8);
-  const departures = upcoming.map((td) => ({ td, tour: allTours.find((t) => t.id === td.tourId) })).filter((x) => x.tour && x.tour.status === "published");
+  const departures = await getUpcomingDepartures(8);
   const [lead, ...rest] = reviews;
   const heroTitle = settings.heroTitle !== "Explore More. Travel Better. Create Memories." ? settings.heroTitle : undefined;
 
@@ -85,32 +76,7 @@ export default async function HomePage() {
         </div>
       </SectionShell>
 
-      {/* Signature journey */}
-      <SectionShell id="journey">
-        <SectionHeading align="center" index="03" eyebrow="Your journey starts here" title={<>Bogura to the Bay of Bengal, <em>one road.</em></>} sub="Our signature route threads the northern plains, the port city, the hill tracts and the world's longest beach — in four unhurried days." />
-        <div className="relative">
-          <div className="hidden lg:block absolute top-[40%] left-[10%] right-[10%] border-t-2 border-dashed border-fg/20" aria-hidden />
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {JOURNEY.map((s, i) => (
-              <Reveal key={s.place} delay={i * 0.1}>
-                <div className="group">
-                  <div className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-navy-900">
-                    <img src={s.img} alt={s.place} loading="lazy" className="absolute inset-0 h-full w-full object-cover transition-transform duration-[900ms] group-hover:scale-[1.06]" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-navy-900/85 via-transparent to-transparent" />
-                    <span className="absolute top-3 left-3 h-10 w-10 grid place-items-center rounded-full bg-paper text-fg font-display text-sm shadow-card">{i + 1}</span>
-                    <div className="absolute bottom-0 p-5 text-white">
-                      <p className="text-[0.64rem] uppercase tracking-[0.16em] text-white/60">{s.k}</p>
-                      <h3 className="font-display text-[1.6rem] mt-1">{s.place}</h3>
-                      <p className="text-sm text-white/70 mt-1">{s.note}</p>
-                    </div>
-                  </div>
-                </div>
-              </Reveal>
-            ))}
-          </div>
-        </div>
-        <div className="mt-12 flex justify-center"><Link href="/tours/bandarban-adventure" className="btn btn-primary btn-lg">See the full itinerary <ArrowRight className="h-4 w-4" /></Link></div>
-      </SectionShell>
+      <JourneyScroll />
 
       {/* Upcoming departures */}
       <SectionShell id="trips" className="bg-panel/70 border-y border-line">
@@ -119,10 +85,10 @@ export default async function HomePage() {
           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted"><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Live availability</span>
         </div>
         {departures.length === 0 ? (
-          <div className="card p-14 text-center text-muted">No scheduled departures right now — ask us to open one for your dates.</div>
+          <EmptyState kind="departures" tone="card" title="No departures are open for booking yet." description="New dates are added regularly. Tell us where you want to go and we'll prioritise it." actionLabel="Ask about dates" actionHref="/contact" />
         ) : (
           <div className="card overflow-hidden divide-y divide-line">
-            {departures.map(({ td, tour }) => {
+            {departures.map(({ date: td, tour }) => {
               const total = td.seatsTotal || 0;
               const left = total - (td.seatsBooked || 0);
               const pct = Math.min(100, Math.round(((td.seatsBooked || 0) / Math.max(1, total)) * 100));

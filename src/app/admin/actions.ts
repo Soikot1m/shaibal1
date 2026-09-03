@@ -3,7 +3,8 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import {
   bookings, payments, tours, tourDates, tripExpenses, trips, participants, reviews, settings,
-  notifications, users, auditLogs, supportTickets, customTripRequests, destinations, type ProgressStep,
+  notifications, users, auditLogs, supportTickets, customTripRequests, destinations, hotels, transport,
+  tripStages, tripProgressLogs, bookingStatusHistory, type ProgressStep,
 } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth";
@@ -37,6 +38,10 @@ export async function setBookingStatus(id: string, status: string): Promise<Res>
   if (status === "completed") patch.progress = 100;
   if (status === "confirmed" && (b.progress || 0) < 25) patch.progress = 25;
   await db.update(bookings).set(patch).where(eq(bookings.id, id));
+  await db.insert(bookingStatusHistory).values({
+    id: uid("hst"), bookingId: id, fromStatus: b.status, toStatus: status,
+    actor: admin.email, reason: "Updated from admin console",
+  });
   await db.insert(notifications).values({ id: uid("n"), userId: b.userId, title: `Booking ${status.replace("_", " ")}`, message: `${b.tourTitle} (${b.bookingCode}) is now ${status.replace("_", " ")}.`, type: "booking" });
   await audit(admin.email, "booking.status", "booking", id, { from: b.status, to: status });
   refresh();
@@ -239,6 +244,136 @@ export async function setRequestStatus(id: string, status: string): Promise<Res>
   await db.update(customTripRequests).set({ status }).where(eq(customTripRequests.id, id));
   refresh();
   return okay("Request updated");
+}
+
+// ---- Inventory: hotels ----
+export async function saveHotel(input: Record<string, unknown>): Promise<Res> {
+  const admin = await requireAdmin();
+  if (!admin) return fail("Unauthorized");
+  const hotelName = String(input.hotelName || "").trim();
+  if (!hotelName) return fail("Hotel name is required");
+  const values = {
+    hotelName,
+    location: String(input.location || "") || null,
+    roomType: String(input.roomType || "") || null,
+    pricePerNight: Number(input.pricePerNight) || 0,
+    capacity: Number(input.capacity) || 2,
+    tourId: input.tourId ? String(input.tourId) : null,
+    amenities: String(input.amenities || "").split("\n").map((x) => x.trim()).filter(Boolean),
+    contact: String(input.contact || "") || null,
+    notes: String(input.notes || "") || null,
+  };
+  if (input.id) {
+    await db.update(hotels).set(values).where(eq(hotels.id, String(input.id)));
+    await audit(admin.email, "hotel.update", "hotel", String(input.id), { hotelName });
+  } else {
+    const id = uid("htl");
+    await db.insert(hotels).values({ id, ...values });
+    await audit(admin.email, "hotel.create", "hotel", id, { hotelName });
+  }
+  refresh();
+  return okay("Hotel saved");
+}
+
+export async function deleteHotel(id: string): Promise<Res> {
+  const admin = await requireAdmin();
+  if (!admin) return fail("Unauthorized");
+  await db.delete(hotels).where(eq(hotels.id, id));
+  await audit(admin.email, "hotel.delete", "hotel", id);
+  refresh();
+  return okay("Hotel removed");
+}
+
+// ---- Inventory: transport ----
+export async function saveTransport(input: Record<string, unknown>): Promise<Res> {
+  const admin = await requireAdmin();
+  if (!admin) return fail("Unauthorized");
+  const allowed = ["bus", "microbus", "car", "train", "flight", "boat", "jeep"] as const;
+  const vt = String(input.vehicleType || "bus");
+  if (!allowed.includes(vt as (typeof allowed)[number])) return fail("Invalid vehicle type");
+  const values = {
+    provider: String(input.provider || "") || null,
+    vehicleType: vt as (typeof allowed)[number],
+    vehicleNumber: String(input.vehicleNumber || "") || null,
+    driver: String(input.driver || "") || null,
+    driverPhone: String(input.driverPhone || "") || null,
+    seatCapacity: Number(input.seatCapacity) || 30,
+    route: String(input.route || "") || null,
+    cost: Number(input.cost) || 0,
+    tourId: input.tourId ? String(input.tourId) : null,
+  };
+  if (input.id) {
+    await db.update(transport).set(values).where(eq(transport.id, String(input.id)));
+    await audit(admin.email, "transport.update", "transport", String(input.id), { vt });
+  } else {
+    const id = uid("trn");
+    await db.insert(transport).values({ id, ...values });
+    await audit(admin.email, "transport.create", "transport", id, { vt });
+  }
+  refresh();
+  return okay("Transport saved");
+}
+
+export async function deleteTransport(id: string): Promise<Res> {
+  const admin = await requireAdmin();
+  if (!admin) return fail("Unauthorized");
+  await db.delete(transport).where(eq(transport.id, id));
+  await audit(admin.email, "transport.delete", "transport", id);
+  refresh();
+  return okay("Transport removed");
+}
+
+// ---- Trip stages (live progress) ----
+export async function saveTripStages(tripId: string, stages: { label: string; status: string; note?: string; location?: string }[]): Promise<Res> {
+  const admin = await requireAdmin();
+  if (!admin) return fail("Unauthorized");
+  const trip = (await db.select().from(trips).where(eq(trips.id, tripId)).limit(1))[0];
+  if (!trip) return fail("Trip not found");
+  const allowed = ["completed", "upcoming", "delayed", "cancelled"] as const;
+  await db.delete(tripStages).where(eq(tripStages.tripId, tripId));
+  if (stages.length) {
+    await db.insert(tripStages).values(
+      stages.map((s, i) => ({
+        id: uid("stg"), tripId, label: String(s.label || `Stage ${i + 1}`).slice(0, 160),
+        position: i,
+        status: (allowed.includes(s.status as (typeof allowed)[number]) ? s.status : "upcoming") as (typeof allowed)[number],
+        note: s.note?.slice(0, 400) || null,
+        location: s.location?.slice(0, 160) || null,
+        occurredAt: s.status === "completed" ? new Date() : null,
+      })),
+    );
+  }
+  const done = stages.filter((s) => s.status === "completed").length;
+  const progress = stages.length ? Math.round((done / stages.length) * 100) : 0;
+  await db.update(trips).set({ status: progress === 100 ? "completed" : progress > 0 ? "in-progress" : "planning" }).where(eq(trips.id, tripId));
+  await audit(admin.email, "trip.stages", "trip", tripId, { progress, stages: stages.length });
+  refresh();
+  return okay(`Trip stages saved — ${progress}% complete`);
+}
+
+export async function logTripUpdate(tripId: string, message: string, location?: string): Promise<Res> {
+  const admin = await requireAdmin();
+  if (!admin) return fail("Unauthorized");
+  const msg = String(message || "").trim();
+  if (!msg) return fail("Message is required");
+  await db.insert(tripProgressLogs).values({ id: uid("log"), tripId, message: msg.slice(0, 400), location: location?.slice(0, 160) || null, actor: admin.name });
+  const trip = (await db.select().from(trips).where(eq(trips.id, tripId)).limit(1))[0];
+  if (trip) {
+    const members = await db.select().from(participants).where(eq(participants.tripId, tripId));
+    void members;
+  }
+  await audit(admin.email, "trip.log", "trip", tripId, { message: msg });
+  refresh();
+  return okay("Live update posted");
+}
+
+export async function setDestinationPublished(id: string, published: boolean): Promise<Res> {
+  const admin = await requireAdmin();
+  if (!admin) return fail("Unauthorized");
+  await db.update(destinations).set({ published, updatedAt: new Date() }).where(eq(destinations.id, id));
+  await audit(admin.email, "destination.publish", "destination", id, { published });
+  refresh();
+  return okay(published ? "Destination published" : "Destination hidden");
 }
 
 export async function setDestinationFeatured(id: string, featured: boolean): Promise<Res> {

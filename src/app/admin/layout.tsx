@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireAdmin, verifyPassword } from "@/lib/auth";
 import { Logo } from "@/components/logo";
-import { LayoutDashboard, CalendarDays, Compass, Wallet, Settings2, ExternalLink } from "lucide-react";
+import { LayoutDashboard, CalendarDays, Compass, Wallet, Settings2, ExternalLink, BedDouble } from "lucide-react";
 import { Avatar } from "@/components/ui";
 
 export const metadata = { title: "Admin", robots: { index: false, follow: false } };
@@ -12,6 +12,7 @@ const NAV = [
   { href: "/admin/bookings", label: "Bookings", icon: CalendarDays },
   { href: "/admin/tours", label: "Tours", icon: Compass },
   { href: "/admin/finance", label: "Trips & Finance", icon: Wallet },
+  { href: "/admin/inventory", label: "Hotels & Transport", icon: BedDouble },
   { href: "/admin/content", label: "Content & Settings", icon: Settings2 },
 ];
 

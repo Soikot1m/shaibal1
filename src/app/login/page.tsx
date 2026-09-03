@@ -48,11 +48,6 @@ function AuthForm() {
     router.refresh();
   };
 
-  const fill = (email: string) => {
-    setMode("login");
-    setForm((f) => ({ ...f, email, password: "shaibal123" }));
-  };
-
   return (
     <div className="w-full max-w-md">
       <Image src="/logo.png" alt="Shaibal Tours & Travels" width={48} height={48} className="rounded-[26%] shadow-card" />
@@ -88,13 +83,9 @@ function AuthForm() {
         <button disabled={busy} className="btn btn-primary w-full btn-lg">{busy ? "Signing in…" : mode === "login" ? "Sign in" : "Create account"} {!busy && <ArrowRight className="h-4 w-4" />}</button>
       </form>
 
-      <div className="mt-8 rounded-xl border border-dashed border-line p-4 text-xs">
-        <p className="font-semibold text-fg mb-2">Demo access</p>
-        <p className="text-muted mb-3">Password for both accounts: <code className="font-mono text-fg">shaibal123</code></p>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => fill("admin@shaibaltours.com")} className="btn btn-ghost btn-sm">Use admin account</button>
-          <button type="button" onClick={() => fill("demo@shaibaltours.com")} className="btn btn-ghost btn-sm">Use customer account</button>
-        </div>
+      <div className="mt-6 flex items-center justify-between text-sm">
+        <Link href="/contact#support" className="text-muted hover:text-accent underline">Trouble signing in?</Link>
+        <Link href="/login?mode=register" className="font-semibold text-accent">Create an account</Link>
       </div>
       <p className="mt-6 text-xs text-muted">By continuing you agree to our <Link href="/terms" className="underline">terms</Link> and <Link href="/privacy-policy" className="underline">privacy policy</Link>. Google and phone sign-in can be enabled with provider keys.</p>
     </div>

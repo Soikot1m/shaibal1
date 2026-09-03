@@ -61,10 +61,13 @@ export const destinations = pgTable(
     popularity: integer("popularity").default(0),
     featured: boolean("featured").default(false),
     isInternational: boolean("is_international").default(false),
+    published: boolean("published").notNull().default(true),
     isDemo: boolean("is_demo").default(true),
+    travelTips: jsonb("travel_tips").$type<string[]>().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (t) => [uniqueIndex("dest_slug_uq").on(t.slug)],
+  (t) => [uniqueIndex("dest_slug_uq").on(t.slug), index("dest_published_idx").on(t.published)],
 );
 
 export const tours = pgTable(
@@ -100,14 +103,25 @@ export const tours = pgTable(
     faq: jsonb("faq").$type<{ q: string; a: string }[]>().default([]),
     cancellationPolicy: text("cancellation_policy"),
     requiredItems: jsonb("required_items").$type<string[]>().default([]),
+    shortDescription: text("short_description"),
+    returnLocation: text("return_location"),
+    currency: text("currency").notNull().default("BDT"),
+    accommodation: text("accommodation"),
+    transportInfo: text("transport_info"),
+    mealInfo: text("meal_info"),
+    importantNotes: jsonb("important_notes").$type<string[]>().default([]),
+    bookingInfo: text("booking_info"),
+    coordinates: jsonb("coordinates").$type<{ lat: number; lng: number }[]>(),
     status: text("status", { enum: ["draft", "published"] })
       .notNull()
       .default("published"),
     featured: boolean("featured").default(false),
+    published: boolean("published").notNull().default(true),
     isDemo: boolean("is_demo").default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (t) => [uniqueIndex("tour_slug_uq").on(t.slug)],
+  (t) => [uniqueIndex("tour_slug_uq").on(t.slug), index("tour_published_idx").on(t.published)],
 );
 
 export const tourDates = pgTable(
@@ -118,12 +132,148 @@ export const tourDates = pgTable(
       .notNull()
       .references(() => tours.id, { onDelete: "cascade" }),
     date: timestamp("date", { withTimezone: true }).notNull(),
+    endDate: timestamp("end_date", { withTimezone: true }),
     seatsTotal: integer("seats_total").default(20),
     seatsBooked: integer("seats_booked").default(0),
     price: integer("price"),
-    status: text("status").default("open"),
+    status: text("status", {
+      enum: ["open", "almost_full", "full", "cancelled", "completed"],
+    })
+      .notNull()
+      .default("open"),
   },
-  (t) => [index("td_tour_idx").on(t.tourId)],
+  (t) => [index("td_tour_idx").on(t.tourId), index("td_date_idx").on(t.date)],
+);
+
+/** Derived seat availability — the single source of truth for the frontend. */
+export function seatsLeft(d: { seatsTotal: number | null; seatsBooked: number | null }) {
+  return Math.max(0, (d.seatsTotal ?? 0) - (d.seatsBooked ?? 0));
+}
+
+export function tourDateStatus(d: { seatsTotal: number | null; seatsBooked: number | null }) {
+  const left = seatsLeft(d);
+  const total = d.seatsTotal ?? 0;
+  if (left === 0) return "full" as const;
+  if (total > 0 && left <= Math.ceil(total * 0.2)) return "almost_full" as const;
+  return "open" as const;
+}
+
+/** Per-traveller records for a booking. */
+export const bookingTravelers = pgTable(
+  "booking_travelers",
+  {
+    id: text("id").primaryKey(),
+    bookingId: text("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    age: integer("age"),
+    gender: text("gender"),
+    nid: text("nid"),
+    phone: text("phone"),
+    email: text("email"),
+    emergencyContact: text("emergency_contact"),
+    specialRequirements: text("special_requirements"),
+    seat: text("seat"),
+    room: text("room"),
+    paymentStatus: text("payment_status").default("unpaid"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("bt_booking_idx").on(t.bookingId)],
+);
+
+/** Immutable audit trail of every booking status change. */
+export const bookingStatusHistory = pgTable(
+  "booking_status_history",
+  {
+    id: text("id").primaryKey(),
+    bookingId: text("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status").notNull(),
+    actor: text("actor"),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("bsh_booking_idx").on(t.bookingId)],
+);
+
+// ---- Inventory: hotels & transport ----
+export const hotels = pgTable("hotels", {
+  id: text("id").primaryKey(),
+  tourId: text("tour_id").references(() => tours.id, { onDelete: "set null" }),
+  tripId: text("trip_id").references(() => trips.id, { onDelete: "set null" }),
+  hotelName: text("hotel_name").notNull(),
+  location: text("location"),
+  roomType: text("room_type"),
+  pricePerNight: integer("price_per_night").default(0),
+  capacity: integer("capacity").default(2),
+  checkIn: timestamp("check_in", { withTimezone: true }),
+  checkOut: timestamp("check_out", { withTimezone: true }),
+  amenities: jsonb("amenities").$type<string[]>().default([]),
+  contact: text("contact"),
+  images: jsonb("images").$type<string[]>().default([]),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const transport = pgTable("transport", {
+  id: text("id").primaryKey(),
+  tourId: text("tour_id").references(() => tours.id, { onDelete: "set null" }),
+  tripId: text("trip_id").references(() => trips.id, { onDelete: "set null" }),
+  provider: text("provider"),
+  vehicleType: text("vehicle_type", {
+    enum: ["bus", "microbus", "car", "train", "flight", "boat", "jeep"],
+  })
+    .notNull()
+    .default("bus"),
+  vehicleNumber: text("vehicle_number"),
+  driver: text("driver"),
+  driverPhone: text("driver_phone"),
+  seatCapacity: integer("seat_capacity").default(30),
+  departureTime: timestamp("departure_time", { withTimezone: true }),
+  arrivalTime: timestamp("arrival_time", { withTimezone: true }),
+  route: text("route"),
+  cost: integer("cost").default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+/** Individual stages of a live trip, updated by admin during travel. */
+export const tripStages = pgTable(
+  "trip_stages",
+  {
+    id: text("id").primaryKey(),
+    tripId: text("trip_id")
+      .notNull()
+      .references(() => trips.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    position: integer("position").notNull().default(0),
+    status: text("status", {
+      enum: ["completed", "upcoming", "delayed", "cancelled"],
+    })
+      .notNull()
+      .default("upcoming"),
+    note: text("note"),
+    location: text("location"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+  },
+  (t) => [index("ts_trip_idx").on(t.tripId)],
+);
+
+export const tripProgressLogs = pgTable(
+  "trip_progress_logs",
+  {
+    id: text("id").primaryKey(),
+    tripId: text("trip_id")
+      .notNull()
+      .references(() => trips.id, { onDelete: "cascade" }),
+    message: text("message").notNull(),
+    location: text("location"),
+    actor: text("actor"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("tpl_trip_idx").on(t.tripId)],
 );
 
 // ---- Bookings ----

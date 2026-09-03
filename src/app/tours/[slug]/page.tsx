@@ -34,15 +34,55 @@ export default async function TourDetail({ params, searchParams }: { params: Pro
   ]);
   const isSaved = favRows.length > 0;
 
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "";
+
   const img = tour.images?.[0] || "";
   const gallery = tour.images?.slice(1) || [];
   const effPrice = tour.discountPrice && tour.discountPrice > 0 ? tour.discountPrice : tour.price;
   const isCustom = tour.price === 0;
   const upcoming = dates.filter((d) => d.date > new Date());
+
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "TouristTrip",
+        name: tour.title,
+        description: tour.shortDescription || tour.description || "",
+        url: `${siteUrl}/tours/${tour.slug}`,
+        image: tour.images || [],
+        touristType: tour.category,
+        itinerary: (tour.itinerary || []).map((d) => ({
+          "@type": "ItemList",
+          name: d.title,
+          description: d.activity,
+          position: d.day,
+        })),
+        offers: {
+          "@type": "Offer",
+          price: effPrice,
+          priceCurrency: tour.currency || "BDT",
+          availability: upcoming.length > 0 ? "https://schema.org/InStock" : "https://schema.org/SoldOut",
+        },
+        aggregateRating: (tour.rating || 0) > 0 && (tour.travelerCount || 0) > 0
+          ? { "@type": "AggregateRating", ratingValue: tour.rating, reviewCount: tour.travelerCount }
+          : undefined,
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: siteUrl },
+          { "@type": "ListItem", position: 2, name: "Tours", item: `${siteUrl}/tours` },
+          { "@type": "ListItem", position: 3, name: tour.title, item: `${siteUrl}/tours/${tour.slug}` },
+        ],
+      },
+    ],
+  };
   const selectedDate = sp.date ? new Date(sp.date) : upcoming[0]?.date;
 
   return (
     <div>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       {/* Hero */}
       <section className="relative h-[62vh] min-h-[420px] flex items-end">
         <img src={img} alt={tour.title} className="absolute inset-0 h-full w-full object-cover" />
@@ -207,10 +247,14 @@ export default async function TourDetail({ params, searchParams }: { params: Pro
               <p className="text-[0.7rem] text-muted mt-4">Policy: {tour.cancellationPolicy}</p>
             )}
           </div>
-          <div className="mt-4 p-4 rounded-2xl bg-sky-50 dark:bg-sky-500/10 text-sm">
-            <p className="font-semibold mb-1">⚠️ Demo tour content</p>
-            <p className="text-muted text-xs">Tour details and pricing shown here are demo content that can be edited by the operator from the admin panel.</p>
-          </div>
+          {tour.importantNotes && tour.importantNotes.length > 0 && (
+            <div className="mt-4 card p-5">
+              <h4 className="text-sm font-bold uppercase tracking-[0.1em] text-muted mb-3">Important information</h4>
+              <ul className="space-y-2 text-sm text-muted">
+                {tour.importantNotes.map((n) => <li key={n} className="flex gap-2"><span className="text-accent mt-0.5">•</span>{n}</li>)}
+              </ul>
+            </div>
+          )}
         </aside>
       </section>
 

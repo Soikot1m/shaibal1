@@ -7,12 +7,18 @@ import {
 } from "@/db/schema";
 import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 
-export async function getPublishedTours(opts?: { featured?: boolean; limit?: number }) {
-  const q = db.select().from(tours);
-  const clauses = [eq(tours.status, "published")];
+export async function getPublishedTours(opts?: {
+  featured?: boolean;
+  limit?: number;
+}) {
+  const clauses = [eq(tours.status, "published"), eq(tours.published, true)];
   if (opts?.featured) clauses.push(eq(tours.featured, true));
-  const rows = await q.where(and(...clauses)).limit(opts?.limit ?? 100);
-  return rows;
+  return db
+    .select()
+    .from(tours)
+    .where(and(...clauses))
+    .orderBy(desc(tours.featured), desc(tours.createdAt))
+    .limit(opts?.limit ?? 100);
 }
 
 export async function getFeaturedTours() {
@@ -28,15 +34,26 @@ export async function getTourDates(tourId: string) {
   return db.select().from(tourDates).where(eq(tourDates.tourId, tourId)).orderBy(asc(tourDates.date));
 }
 
-export async function getDestinations(opts?: { featured?: boolean; limit?: number }) {
-  const clauses = [];
+export async function getDestinations(opts?: {
+  featured?: boolean;
+  limit?: number;
+}) {
+  const clauses = [eq(destinations.published, true)];
   if (opts?.featured) clauses.push(eq(destinations.featured, true));
-  const rows = await db.select().from(destinations).limit(opts?.limit ?? 100);
-  return rows;
+  return db
+    .select()
+    .from(destinations)
+    .where(and(...clauses))
+    .orderBy(desc(destinations.featured), desc(destinations.popularity))
+    .limit(opts?.limit ?? 100);
 }
 
 export async function getDestinationBySlug(slug: string) {
-  const rows = await db.select().from(destinations).where(eq(destinations.slug, slug)).limit(1);
+  const rows = await db
+    .select()
+    .from(destinations)
+    .where(and(eq(destinations.slug, slug), eq(destinations.published, true)))
+    .limit(1);
   return rows[0] ?? null;
 }
 
@@ -81,6 +98,24 @@ export async function getRelatedTours(tourId: string, excludeId: string, limit =
     .from(tours)
     .where(eq(tours.status, "published"))
     .limit(limit);
+}
+
+/** Future departures joined with their tour, sorted soonest first. */
+export async function getUpcomingDepartures(limit = 8) {
+  const rows = await db
+    .select({ date: tourDates, tour: tours })
+    .from(tourDates)
+    .innerJoin(tours, eq(tours.id, tourDates.tourId))
+    .where(
+      and(
+        gte(tourDates.date, new Date()),
+        eq(tours.status, "published"),
+        eq(tours.published, true),
+      ),
+    )
+    .orderBy(asc(tourDates.date))
+    .limit(limit);
+  return rows;
 }
 
 // ---- bookings with a couple of related tables (admin/account) ----

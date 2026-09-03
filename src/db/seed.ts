@@ -54,6 +54,15 @@ interface Tour {
 }
 
 async function main() {
+  // Guard rail: seeding wipes the database and inserts demo content. It must be
+  // explicitly enabled so it can never run against a production database.
+  if (process.env.ALLOW_DEMO_SEED !== "true") {
+    console.error(
+      "\nREFUSED: this seed script deletes ALL existing data and inserts demo content.\n" +
+      "Set ALLOW_DEMO_SEED=true to confirm you are targeting a development database.\n",
+    );
+    process.exit(1);
+  }
   await clearTables();
 
   const ADMIN_ID = uid();
@@ -86,7 +95,7 @@ async function main() {
     id: uid(), slug: d.slug, name: d.name, country: d.country, region: d.region, headline: d.headline,
     type: d.type, description: d.description, image: d.image, gallery: d.gallery, bestTime: d.bestTime,
     budget: d.budget, activities: d.activities, lat: d.lat, lng: d.lng, popularity: d.popularity,
-    featured: d.featured, isInternational: d.isInternational, isDemo: true,
+    featured: d.featured, isInternational: d.isInternational, published: true, isDemo: true,
   }));
   await db.insert(s.destinations).values(destRows);
   const destById = new Map(dlist.map((d, i) => [d.slug, destRows[i].id]));
@@ -163,7 +172,7 @@ async function main() {
     departureCity: t.departureCity, difficulty: t.difficulty, groupSize: t.groupSize, rating: t.rating,
     travelerCount: t.travelerCount, included: t.included, excluded: t.excluded, itinerary: t.itinerary,
     images: t.images, lat: t.lat, lng: t.lng, faq: t.faq, cancellationPolicy: t.cancellationPolicy,
-    requiredItems: t.requiredItems, status: "published" as const, featured: t.featured, isDemo: true,
+    requiredItems: t.requiredItems, shortDescription: t.subtitle, returnLocation: t.departureCity, currency: "BDT", status: "published" as const, published: true, featured: t.featured, isDemo: true,
   }));
   await db.insert(s.tours).values(toInsert);
 
@@ -177,7 +186,7 @@ async function main() {
     "sylhet-nature-tour": [12, 60], "sundarbans-expedition": [45], "rangamati-lakeside-tour": [9, 30],
     "kuakata-beach-tour": [25], "nepal-kathmandu-adventure": [60], "thailand-bangkok-escape": [70],
   };
-  const tdRows: { id: string; tourId: string; date: Date; seatsTotal: number; seatsBooked: number; status: string }[] = [];
+  const tdRows: { id: string; tourId: string; date: Date; seatsTotal: number; seatsBooked: number; status: "open" | "almost_full" | "full" | "cancelled" | "completed" }[] = [];
   for (const tour of allTours) {
     const offsets = dateOffsets[tour.slug];
     if (!offsets) continue;
@@ -185,7 +194,7 @@ async function main() {
       tdRows.push({
         id: uid(), tourId: tour.id, date: daysFromNow(off),
         seatsTotal: tour.slug === "nepal-kathmandu-adventure" ? 18 : 24,
-        seatsBooked: seatMap[tour.slug] ?? 0, status: "open",
+        seatsBooked: seatMap[tour.slug] ?? 0, status: "open" as const,
       });
     }
   }
@@ -303,7 +312,7 @@ async function main() {
     { key: "announcement", value: { text: "Now booking: Bandarban Adventure & Cox's Bazar Escape for the coming weeks." } },
   ]);
 
-  console.log("Seeded demo data successfully.");
+  console.log("Seeded demo data successfully. (demo content — never run against production)");
   console.log("Admin login   : admin@shaibaltours.com / shaibal123");
   console.log("Customer login: demo@shaibaltours.com / shaibal123");
   await pool.end();

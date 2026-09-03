@@ -2,7 +2,7 @@
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { bookings, payments, users, sessions, tours, tourDates, reviews, contactSubmissions, newsletterSubscribers, customTripRequests, supportTickets, notifications, auditLogs, type ProgressStep } from "@/db/schema";
+import { bookings, payments, users, sessions, tours, tourDates, reviews, contactSubmissions, newsletterSubscribers, customTripRequests, supportTickets, notifications, auditLogs, bookingTravelers, bookingStatusHistory, type ProgressStep } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { hashPassword, verifyPassword, createSession, destroySession, getSessionUser } from "@/lib/auth";
 import {
@@ -114,14 +114,41 @@ export async function createBooking(input: {
   const parsed = bookingSubmitSchema.safeParse(input);
   if (!parsed.success) return error(zmsg(parsed.error));
   const d = parsed.data;
-  const tour = await db.select().from(tours).where(eq(tours.id, d.tourId!)).limit(1);
-  const basePrice = tour[0]?.discountPrice && tour[0].discountPrice > 0 ? tour[0].discountPrice : tour[0]?.price ?? 0;
-  const travelers = d.travelers?.length ? d.travelers.length : 1;
-  const total = d.total && d.total > 0 ? d.total : basePrice * travelers;
+
+  // ---- Server-side authority: never trust a client-supplied total ----
+  const tourRow = (await db.select().from(tours).where(eq(tours.id, String(d.tourId))).limit(1))[0];
+  if (!tourRow) return error("That tour is no longer available.");
+  if (tourRow.status !== "published" || tourRow.published === false) return error("That tour is not open for booking.");
+  if (tourRow.price === 0) return error("This is a custom tour — please request a quote instead.");
+
+  const travellerList = d.travelers?.length ? d.travelers : [{ name: d.contactName }];
+  const travellerCount = travellerList.length;
+  if (travellerCount > (tourRow.groupSize ?? 20)) {
+    return error(`This tour takes a maximum of ${tourRow.groupSize} travellers. Please contact us for large groups.`);
+  }
+
+  // Resolve the chosen departure and enforce real seat availability.
+  let unitPrice = tourRow.discountPrice && tourRow.discountPrice > 0 ? tourRow.discountPrice : tourRow.price;
+  let departureDate: Date | null = d.date ? new Date(d.date) : null;
+  if (d.tourDateId) {
+    const slot = (await db.select().from(tourDates).where(eq(tourDates.id, d.tourDateId)).limit(1))[0];
+    if (!slot || slot.tourId !== tourRow.id) return error("That departure date is not available.");
+    if (slot.status === "cancelled") return error("That departure has been cancelled.");
+    const left = Math.max(0, (slot.seatsTotal ?? 0) - (slot.seatsBooked ?? 0));
+    if (travellerCount > left) {
+      return error(left === 0 ? "That departure is fully booked." : `Only ${left} seat${left === 1 ? "" : "s"} left on that departure.`);
+    }
+    if (slot.price && slot.price > 0) unitPrice = slot.price;
+    departureDate = slot.date;
+  } else if (!departureDate) {
+    return error("Please choose a departure date.");
+  }
+
+  const total = unitPrice * travellerCount;
   const user = await getSessionUser();
-  const all = await db.select().from(bookings);
+  const all = await db.select({ id: bookings.id }).from(bookings);
   const next = all.length + 1;
-  const code = `STL-${new Date().getFullYear()}-${String(next).padStart(4, "0")}`;
+  const code = `SBT-${new Date().getFullYear()}-${String(next).padStart(6, "0")}`;
   const bookingId = uid("bk");
   const steps: ProgressStep[] = [
     { id: "s1", label: "Booking Submitted", status: "completed", detail: `Booking ${code}` },
@@ -131,22 +158,38 @@ export async function createBooking(input: {
     { id: "s5", label: "Trip Completed", status: "upcoming" },
   ];
   await db.insert(bookings).values({
-    id: bookingId, bookingCode: code, tourId: tour[0]?.id, tourDateId: d.tourDateId || null,
-    tourTitle: d.tourTitle || tour[0]?.title || "Tour", userId: user?.id || null,
+    id: bookingId, bookingCode: code, tourId: tourRow.id, tourDateId: d.tourDateId || null,
+    tourTitle: tourRow.title, userId: user?.id || null,
     contactName: d.contactName, contactPhone: d.contactPhone, contactEmail: d.contactEmail,
     emergencyName: d.emergencyName || null, emergencyPhone: d.emergencyPhone || null,
-    date: d.date ? new Date(d.date) : null, travelers: d.travelers || [],
+    date: departureDate, travelers: travellerList,
     preferences: {}, specialRequests: d.specialRequests || null, total, paidAmount: 0,
     status: "pending", progress: 5, progressJson: steps, createdBy: "public",
   });
+  await db.insert(bookingTravelers).values(
+    travellerList.map((t) => ({
+      id: uid("trv"), bookingId,
+      name: t.name, age: t.age ? Number(t.age) || null : null,
+      gender: t.gender || null, nid: t.nid || null,
+    })),
+  );
+  await db.insert(bookingStatusHistory).values({
+    id: uid("hst"), bookingId, fromStatus: null, toStatus: "pending",
+    actor: user?.email || d.contactEmail, reason: "Booking submitted online",
+  });
   if (d.tourDateId) {
-    try {
-      const td = await db.select().from(tourDates).where(eq(tourDates.id, d.tourDateId)).limit(1);
-      const seats = td[0]?.seatsBooked || 0;
-      await db.update(tourDates).set({ seatsBooked: seats + 1 }).where(eq(tourDates.id, d.tourDateId));
-    } catch { /* ignore */ }
+    const slot = (await db.select().from(tourDates).where(eq(tourDates.id, d.tourDateId)).limit(1))[0];
+    if (slot) {
+      const booked = (slot.seatsBooked ?? 0) + travellerCount;
+      const totalSeats = slot.seatsTotal ?? 0;
+      const left = Math.max(0, totalSeats - booked);
+      await db.update(tourDates).set({
+        seatsBooked: booked,
+        status: left === 0 ? "full" : totalSeats > 0 && left <= Math.ceil(totalSeats * 0.2) ? "almost_full" : "open",
+      }).where(eq(tourDates.id, d.tourDateId));
+    }
   }
-  await db.insert(notifications).values({ id: uid(), userId: user?.id || null, title: "Booking received", message: `Your booking ${code} for ${d.tourTitle || tour[0]?.title} was submitted.`, type: "booking" });
+  await db.insert(notifications).values({ id: uid(), userId: user?.id || null, title: "Booking received", message: `Your booking ${code} for ${tourRow.title} was submitted.`, type: "booking" });
   revalidatePath("/account");
   return { ok: true as const, bookingId, code, message: "Booking submitted successfully" };
 }

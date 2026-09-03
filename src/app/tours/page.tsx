@@ -5,6 +5,7 @@ import { getPublishedTours, getTourDates } from "@/lib/data";
 import { TourCard } from "@/components/cards";
 import { SectionHeading } from "@/components/ui";
 import { Reveal } from "@/components/motion";
+import { EmptyState } from "@/components/empty-state";
 
 const CATEGORIES = ["All", "Adventure", "Beach", "Mountains", "Nature", "Cultural", "International", "Custom"];
 const SORTS = ["Recommended", "price-low", "price-high", "rating"];
@@ -79,11 +80,7 @@ export default async function ToursPage({ searchParams }: { searchParams: Promis
         <p className="text-sm text-muted mb-6">{filtered.length} tour{filtered.length === 1 ? "" : "s"} available</p>
 
         {filtered.length === 0 ? (
-          <div className="card p-14 text-center">
-            <p className="font-display font-bold text-xl">No tours match your search</p>
-            <p className="text-sm text-muted mt-2">Try clearing filters or browse all tours.</p>
-            <Link href="/tours" className="btn btn-primary mt-5">Clear filters</Link>
-          </div>
+          <EmptyState kind="tours" actionLabel="Clear filters" actionHref="/tours" />
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             <Suspense fallback={<p>Loading…</p>}>

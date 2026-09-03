@@ -4,6 +4,7 @@ import { DestinationCard } from "@/components/cards";
 import { SectionHeading } from "@/components/ui";
 import { Reveal } from "@/components/motion";
 import { IMG } from "@/lib/images";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Destinations", description: "Explore Bangladesh and international destinations with Shaibal Tours & Travels." };
 
@@ -77,7 +78,7 @@ export default async function DestinationsPage({ searchParams }: { searchParams:
 
         <SectionHeading align="left" title={`${list.length} destination${list.length === 1 ? "" : "s"}`} className="!mb-6" />
         {list.length === 0 ? (
-          <div className="card p-14 text-center"><p className="font-display font-bold text-xl">Nothing matched those filters</p><Link href="/destinations" className="btn btn-primary mt-5">Reset filters</Link></div>
+          <EmptyState kind="search" title="Nothing matched those filters." description="Try widening the budget range or clearing the style filter." actionLabel="Reset all filters" actionHref="/destinations" />
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {list.map((d, i) => <Reveal key={d.id} delay={(i % 4) * 0.05}><DestinationCard dest={d} /></Reveal>)}
